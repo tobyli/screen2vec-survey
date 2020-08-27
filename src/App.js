@@ -1,6 +1,8 @@
 import React from 'react';
 import './App.css';
 
+var baseUrl = "http://localhost:3001/screen2vec";
+
 function App() {
     return (
         <div className="App">
@@ -33,10 +35,7 @@ class RootPage extends React.Component {
             );
         } else if (this.state.mainViewState === "task") {
             return (
-                <ImageTask datasetPath={"./res/test_dataset"}
-                           datasetLabels={["1", "2"]}
-                           availableModels={["Screen2Vec", "visualOnly", "layoutOnly", "textOnly"]}
-                           modelMode={'random'}
+                <ImageTask modelMode={'union'}
                            randomDataOrder={true}
                            showDebugInfo={true}
                            setMainViewStateCallback={this.setMainViewState}/>
@@ -102,23 +101,70 @@ class ImageTask extends React.Component {
     constructor(props) {
         super(props);
         this.state = {
-            datasetCount: 0
+            datasetCount: 0,
+            datasetLabels: [],
+            availableModels: []
         };
         this.incrementCount = this.incrementCount.bind(this);
         this.onFinishLabeling = this.onFinishLabeling.bind(this);
+        this.fetchData = this.fetchData.bind(this);
+        this.fetchJsonAndImage = this.fetchJsonAndImage.bind(this);
+        this.randomizeModel = this.randomizeModel.bind(this);
+    }
 
-        this.datasetLabels = this.props.datasetLabels;
+    async componentDidMount () {
+        await this.fetchData();
+        await this.fetchJsonAndImage();
+    }
+
+    async fetchData() {
+        let datasetLabels = await getDataSetNames();
+        let availableModels = await getAvailableModels();
 
         //shuffle the data order
         if (this.props.randomDataOrder) {
-            shuffleArray(this.datasetLabels);
+            shuffleArray(datasetLabels);
         }
+        this.setState({
+            datasetLabels: datasetLabels,
+            availableModels: availableModels,
+        });
+        this.randomizeModel(availableModels);
     }
 
-    incrementCount() {
+    async fetchJsonAndImage(){
+        let dataLabel = this.state.datasetLabels[this.state.datasetCount];
+        let srcImage = await getSrcImage(dataLabel);
+        let srcJson = await getSrcJson(dataLabel);
+        let candidateJson = await getCandidateJson(dataLabel, this.state.model);
+
         this.setState({
-            datasetCount: this.state.datasetCount + 1
+            srcImage: srcImage,
+            srcJson: srcJson,
+            candidateJson: candidateJson
+        });
+    }
+
+    randomizeModel(availableModels) {
+        //get a random model
+        let model = "";
+        if (this.props.modelMode === "random") {
+            model = availableModels[Math.floor(Math.random() * availableModels.length)];
+        } else if (this.props.modelMode === "union") {
+            model = "union";
+        }
+        this.setState({
+            model: model
         })
+    }
+
+    async incrementCount() {
+        let newDatasetCount = this.state.datasetCount + 1;
+        await this.setState({
+            datasetCount: newDatasetCount
+        });
+        await this.randomizeModel(this.state.availableModels);
+        this.fetchJsonAndImage();
     }
 
     onFinishLabeling() {
@@ -127,57 +173,47 @@ class ImageTask extends React.Component {
 
     render() {
         //get the dataLabel corresponding to the current datasetCount
-        let dataLabel = this.datasetLabels[this.state.datasetCount];
+        let dataLabel = this.state.datasetLabels[this.state.datasetCount];
+        let model = this.state.model;
 
-        //get a random label
-        let model = "";
-        if (this.props.modelMode === "random") {
-            model = this.props.availableModels[Math.floor(Math.random() * this.props.availableModels.length)];
-        } else if (this.props.modelMode === "union") {
-            model = "union";
+        if (dataLabel !== undefined) {
+            //check if the current data is the last one
+            let isLastDataSet = this.state.datasetCount === this.state.datasetLabels.length - 1;
+            //generate arrays of candidates
+            let candidateComponents = [];
+
+            for (const i in this.state.candidateJson) {
+                let candidateItem = this.state.candidateJson[i];
+                candidateComponents.push(<CandidateImage key={"candidate" + candidateItem.imageId} candidateJson={candidateItem}/>);
+            }
+
+            //randomize the order of candidates
+            shuffleArray(candidateComponents);
+
+            return (
+                <header className="App-header">
+                    <SourceImage srcImage={this.state.srcImage}
+                                 srcJson={this.state.srcJson}/>
+                    {candidateComponents}
+                    <div className="Debug-info" style={this.props.showDebugInfo ? {display: "block"} : {display: "none"}}>
+                        <ul>
+                            <li>Count = {this.state.datasetCount + 1}{"\n"}</li>
+                            <li>Model: {model}</li>
+                            <li>Candidates: {JSON.stringify(this.state.candidateJson)}</li>
+                        </ul>
+                    </div>
+                    <MyButton
+                        text={isLastDataSet ? "Finish" : "Next"}
+                        buttonCallback={isLastDataSet ? this.onFinishLabeling : this.incrementCount}/>
+                </header>
+            );
+        } else {
+            return (
+                <header className="App-header">
+                    <p>NULL</p>
+                </header>
+            );
         }
-
-        //generate the paths based on the current datasetLabel and the model to use
-        let srcImagePath = `${this.props.datasetPath}/${dataLabel}/src.png`;
-        let srcJsonPath = `${this.props.datasetPath}/${dataLabel}/src.json`;
-        let modelImagesDirPath = `${this.props.datasetPath}/${dataLabel}/${model}`;
-
-        //TODO: generate the paths for all images
-
-
-        //check if the current data is the last one
-        let isLastDataSet = this.state.datasetCount === this.datasetLabels.length - 1;
-
-        return (
-            <header className="App-header">
-                <SourceImage srcImagePath={srcImagePath}
-                             srcJsonPath={srcJsonPath}/>
-                <div style={this.props.showDebugInfo ? {display: "block"} : {display: "none"}}>
-                    <ul>
-                        <li>Count = {this.state.datasetCount + 1}{"\n"}</li>
-                        <li>Src Image Path: {srcImagePath}{"\n"}</li>
-                        <li>Src JSON Path: {srcJsonPath}{"\n"}</li>
-                        <li>Dst Image Dir Path: {modelImagesDirPath}{"\n"}</li>
-                        <li>Model: {model}</li>
-                    </ul>
-                </div>
-                <MyButton
-                    text={isLastDataSet ? "Finish" : "Next"}
-                    buttonCallback={isLastDataSet ? this.onFinishLabeling : this.incrementCount}/>
-            </header>
-        );
-    }
-}
-
-/**
- * class for storing a image candidate
- */
-class CandidateImage {
-    constructor(imageId, imagePath, modelUsed, appName) {
-        this.imageId = imageId;
-        this.imagePath = imagePath;
-        this.modelUsed = modelUsed;
-        this.appName = appName;
     }
 }
 
@@ -188,40 +224,80 @@ class SourceImage extends React.Component {
     }
 
     render() {
-        return (
-            <div id="sourceImageContainer">
-                <div id="imageInstruction">
-                    <h3>Source Screen</h3>
-                    <ul>
-                        <li>App: Test App</li>
-                    </ul>
+        if (this.props.srcJson !== undefined && this.props.srcImage !== undefined) {
+            return (
+                <div id="sourceImageContainer">
+                    <div id="imageInstruction">
+                        <h3>Source Screen</h3>
+                        <ul>
+                            <li>App Name: {this.props.srcJson.appName}</li>
+                        </ul>
+                    </div>
+                    <div id="sourceImage">
+                        <img src={this.props.srcImage} alt="source screenshot" height="500"/>
+                    </div>
                 </div>
-                <div id="sourceImage">
-                    <img src={this.props.srcImagePath} alt="source screenshot" height="500"/>
-                </div>
-            </div>
-        );
+            );
+        } else {
+            return (
+                <header className="App-header">
+                    <p>NULL</p>
+                </header>
+            );
+        }
     }
 }
 
-class compareImage extends React.Component {
+class CandidateImage extends React.Component {
     constructor(props) {
         super(props);
+        this.state = {
+            candidateImage: undefined
+        };
+        this.fetchImage = this.fetchImage.bind(this);
+    }
+
+    async componentDidMount() {
+        await this.fetchImage(this.props);
+    }
+
+    async componentWillReceiveProps(nextProps, nextState, nextContext) {
+        await this.fetchImage(nextProps);
+    }
+
+    async fetchImage(props) {
+        const dataName = props.candidateJson.dataName;
+        const modelName = props.candidateJson.modelUsed[0];
+        const imageId = props.candidateJson.imageId;
+        let candidateImage = await getCandidateImage(dataName, modelName, imageId);
+
+        this.setState({
+            candidateImage: candidateImage
+        });
+
     }
 
     render() {
-        return (
-            <div id="sourceImageContainer">
-                <div id="imageInstruction">
-                    <h3>Source Screen</h3>
-                    <ul>
-                        <li>App: Test App</li>
-                    </ul>
+        if (this.props.candidateJson !== undefined && this.state.candidateImage !== undefined) {
+            return (
+                <div id="sourceImageContainer">
+                    <div id="imageInstruction">
+                        <h3>Candidate Screen</h3>
+                        <ul>
+                            <li>App Name: {this.props.candidateJson.appName}</li>
+                            <li>Image ID: {this.props.candidateJson.imageId}</li>
+                            <li>Model Used: {this.props.candidateJson.modelUsed.join(", ")}</li>
+                        </ul>
+                    </div>
+                    <div id="sourceImage">
+                        <img src={this.state.candidateImage} alt="candidate screenshot" height="500"/>
+                    </div>
                 </div>
-                <div id="sourceImage">
-                    <img src={this.props.imagePath} alt="image screenshot" height="500"/>
-                </div>
-            </div>
+            );
+        } else return (
+            <header className="App-header">
+                <p>NULL</p>
+            </header>
         );
     }
 }
@@ -237,5 +313,36 @@ function shuffleArray(array) {
     }
 }
 
+async function getDataSetNames() {
+    const response = await fetch(`${baseUrl}/get-dataset-names`);
+    return await response.json();
+}
+
+async function getAvailableModels() {
+    const response = await fetch(`${baseUrl}/get-model-names`);
+    return await response.json();
+}
+
+async function getSrcImage(dataName) {
+    const response = await fetch(`${baseUrl}/get-source-image?dataName=${dataName}`);
+    let blob = await response.blob();
+    return URL.createObjectURL(blob);
+}
+
+async function getSrcJson(dataName) {
+    const response = await fetch(`${baseUrl}/get-source-json?dataName=${dataName}`);
+    return await response.json();
+}
+
+async function getCandidateJson(dataName, modelName) {
+    const response = await fetch(`${baseUrl}/get-candidate-json?dataName=${dataName}&modelName=${modelName}`);
+    return await response.json();
+}
+
+async function getCandidateImage(dataName, modelName, imageId) {
+    const response = await fetch(`${baseUrl}/get-image?dataName=${dataName}&modelName=${modelName}&imageId=${imageId}`);
+    let blob = await response.blob();
+    return URL.createObjectURL(blob);
+}
 
 export default App;

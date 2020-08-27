@@ -36,6 +36,8 @@ h1 {
     padding: 10px;
     align-items: center;
     justify-content: center;
+    width: 50%;
+    word-wrap: break-word;
 }
 
 
@@ -63,6 +65,11 @@ h1 {
 
 .App-link {
     color: #61dafb;
+}
+
+.Debug-info {
+    width: 80%;
+    word-wrap: break-word;
 }
 
 .btn-class {
